@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "name": "herdr-voice",
+      "install": "shanev/herdr-voice/skills/herdr-voice",
+      "category": "autonomous-ai-agents",
+      "reviewed": true
+    }
+  ]
+}
