@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import catalogJson from "../voice-skills.json";
-import { checkCatalog, frontmatter, harkMetadataErrors, rawSkillUrl, skillErrors } from "../scripts/voice-skills";
+import { checkCatalog, checkSkill, frontmatter, harkMetadataWarnings, rawSkillUrl } from "../scripts/voice-skills";
 
 const entry = {
   name: "herdr-voice",
@@ -86,63 +86,70 @@ describe("frontmatter", () => {
   });
 });
 
-describe("skillErrors", () => {
+const clean = { errors: [], warnings: [] };
+
+describe("checkSkill", () => {
   it("accepts a complete skill", () => {
-    expect(skillErrors(entry, skillMd(valid))).toEqual([]);
+    expect(checkSkill(entry, skillMd(valid))).toEqual(clean);
   });
 
-  it("accepts a skill with only the required metadata", () => {
-    const minimal = `name: herdr-voice\ndescription: Short.\nmetadata:\n  hark:\n    voice: true\n    summary: Does a thing.`;
-    expect(skillErrors(entry, skillMd(minimal))).toEqual([]);
+  it("accepts any Hermes skill: metadata.hark is optional", () => {
+    const plain = `name: herdr-voice\ndescription: "Claude Code, Codex, omp, any coding agent: Herdr, not tmux"`;
+    expect(checkSkill(entry, skillMd(plain))).toEqual(clean);
   });
 
-  it("reports a missing hark block, as on a skill that predates it", () => {
-    const old = `name: herdr-voice\ndescription: "Claude Code, Codex, omp, any coding agent: Herdr, not tmux"`;
-    expect(skillErrors(entry, skillMd(old))).toEqual(["metadata.hark: missing (must be a mapping)"]);
+  it("fails only when the name doesn't match the catalog", () => {
+    const yaml = valid.replace("name: herdr-voice", "name: herdr");
+    expect(checkSkill(entry, skillMd(yaml)).errors).toEqual(['name: SKILL.md says "herdr", catalog says "herdr-voice"']);
   });
 
-  it("checks the name against the catalog and the description length in characters", () => {
-    const yaml = valid
-      .replace("name: herdr-voice", "name: herdr")
-      .replace(/^description: .*$/m, `description: "${"é".repeat(60)}"`);
-    expect(skillErrors(entry, skillMd(yaml))).toEqual(['name: SKILL.md says "herdr", catalog says "herdr-voice"']);
+  it("warns about a description Hermes cuts, counting characters", () => {
+    const sixty = valid.replace(/^description: .*$/m, `description: "${"é".repeat(60)}"`);
+    expect(checkSkill(entry, skillMd(sixty))).toEqual(clean);
     const long = valid.replace(/^description: .*$/m, `description: "${"x".repeat(61)}"`);
-    expect(skillErrors(entry, skillMd(long))).toEqual(["description: 61 chars, at most 60"]);
+    expect(checkSkill(entry, skillMd(long))).toEqual({
+      errors: [],
+      warnings: ["description: 61 chars, Hermes shows the model the first 60"],
+    });
   });
 
-  it("reports missing or broken frontmatter", () => {
-    expect(skillErrors(entry, "# Just a body\n")).toEqual(["SKILL.md: no YAML frontmatter"]);
-    expect(skillErrors(entry, skillMd("name: [unclosed"))[0]).toMatch(/^SKILL.md: frontmatter is not valid YAML/);
-    expect(skillErrors(entry, skillMd("- a list"))).toEqual(["SKILL.md: frontmatter must be a mapping"]);
+  it("fails on missing or broken frontmatter", () => {
+    expect(checkSkill(entry, "# Just a body\n").errors).toEqual(["SKILL.md: no YAML frontmatter"]);
+    expect(checkSkill(entry, skillMd("name: [unclosed")).errors[0]).toMatch(/^SKILL.md: frontmatter is not valid YAML/);
+    expect(checkSkill(entry, skillMd("- a list")).errors).toEqual(["SKILL.md: frontmatter must be a mapping"]);
   });
 });
 
-describe("harkMetadataErrors", () => {
-  it("enforces every field rule", () => {
+describe("harkMetadataWarnings", () => {
+  it("has nothing to say about a missing block or a minimal one", () => {
+    expect(harkMetadataWarnings(undefined)).toEqual([]);
+    expect(harkMetadataWarnings({ voice: true })).toEqual([]);
+  });
+
+  it("warns about each field Hark shortens or drops", () => {
     expect(
-      harkMetadataErrors({
+      harkMetadataWarnings({
         voice: "true",
         summary: "x".repeat(121),
         requires: { command: "herdr && rm -rf ~" },
-        phrases: ["1", "2", "3", "4", "5", "6", ""],
+        phrases: ["1", "2", "3", "4", "5", "6", "7"],
         routing: "x".repeat(301),
       }),
     ).toEqual([
-      "metadata.hark.voice: must be true",
-      "metadata.hark.summary: 121 chars, at most 120",
-      "metadata.hark.requires.command: must match ^[A-Za-z0-9._-]+$",
-      "metadata.hark.phrases: 7 items, at most 6",
-      "metadata.hark.phrases: every item must be a non-empty string",
-      "metadata.hark.routing: 301 chars, at most 300",
+      "metadata.hark.voice: should be true",
+      "metadata.hark.summary: 121 chars, Hark shortens it to 120",
+      "metadata.hark.requires.command: doesn't match ^[A-Za-z0-9._-]+$, so Hark ignores it",
+      "metadata.hark.phrases: 7 items, Hark shows the first 6",
+      "metadata.hark.routing: 301 chars, Hark cuts it to 300",
     ]);
   });
 
-  it("rejects wrong types", () => {
-    expect(harkMetadataErrors({ voice: true, summary: " ", requires: "herdr", phrases: "hi", routing: 3 })).toEqual([
-      "metadata.hark.summary: must be a non-empty string",
-      "metadata.hark.requires: must be a mapping",
-      "metadata.hark.phrases: must be a list",
-      "metadata.hark.routing: must be a string",
+  it("warns about wrong types", () => {
+    expect(harkMetadataWarnings("yes")).toEqual(["metadata.hark: not a mapping, so Hark ignores it"]);
+    expect(harkMetadataWarnings({ summary: " ", requires: "herdr", phrases: "hi", routing: 3 })).toEqual([
+      "metadata.hark.summary: not a non-empty string, so Hark shows the description",
+      "metadata.hark.phrases: not a list of non-empty strings, so Hark ignores it",
+      "metadata.hark.routing: not a string, so Hark ignores it",
     ]);
   });
 });

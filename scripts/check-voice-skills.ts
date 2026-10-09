@@ -1,5 +1,5 @@
 // Checks voice-skills.json and, for each entry, the SKILL.md on GitHub
-// (name, description length, metadata.hark). Exits 1 on any error.
+// (readable frontmatter, matching name). Exits 1 on an error; warnings don't fail it.
 //
 //   npm run check
 //   npm run check -- --local herdr-voice=../path/to/SKILL.md
@@ -8,7 +8,7 @@
 // skill whose change isn't merged yet). Repeatable.
 
 import { readFileSync } from "node:fs";
-import { checkCatalog, rawSkillUrl, skillErrors } from "./voice-skills.ts";
+import { checkCatalog, checkSkill, rawSkillUrl, type SkillCheck } from "./voice-skills.ts";
 
 const CATALOG = new URL("../voice-skills.json", import.meta.url);
 
@@ -43,19 +43,16 @@ let failed = false;
 for (const entry of catalog.value.skills) {
   const path = local.get(entry.name);
   const source = path ?? rawSkillUrl(entry.install);
-  let errors: string[];
+  let check: SkillCheck;
   try {
-    errors = skillErrors(entry, path ? readFileSync(path, "utf8") : await fetchText(source));
+    check = checkSkill(entry, path ? readFileSync(path, "utf8") : await fetchText(source));
   } catch (e) {
-    errors = [e instanceof Error ? e.message : String(e)];
+    check = { errors: [e instanceof Error ? e.message : String(e)], warnings: [] };
   }
-  if (errors.length) {
-    failed = true;
-    console.error(`✗ ${entry.name} (${source})`);
-    for (const error of errors) console.error(`    ${error}`);
-  } else {
-    console.log(`✓ ${entry.name} (${source})`);
-  }
+  if (check.errors.length) failed = true;
+  console.log(`${check.errors.length ? "✗" : "✓"} ${entry.name} (${source})`);
+  for (const error of check.errors) console.error(`    ${error}`);
+  for (const warning of check.warnings) console.log(`    warning: ${warning}`);
 }
 for (const name of local.keys()) {
   if (!catalog.value.skills.some((s) => s.name === name)) {

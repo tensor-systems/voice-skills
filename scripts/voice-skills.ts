@@ -98,69 +98,76 @@ export function frontmatter(skillMd: string): string | null {
   return skillMd.match(FRONTMATTER)?.[1] ?? null;
 }
 
-/** `metadata.hark` rules shared with the app (contract section 1). */
-export function harkMetadataErrors(hark: unknown): string[] {
-  if (!isRecord(hark)) return ["metadata.hark: missing (must be a mapping)"];
-  const errors: string[] = [];
-  if (hark.voice !== true) errors.push("metadata.hark.voice: must be true");
-  const { summary, requires, phrases, routing } = hark;
-  if (typeof summary !== "string" || summary.trim() === "") {
-    errors.push("metadata.hark.summary: must be a non-empty string");
-  } else if (chars(summary) > MAX_SUMMARY) {
-    errors.push(`metadata.hark.summary: ${chars(summary)} chars, at most ${MAX_SUMMARY}`);
+/**
+ * Problems in a `metadata.hark` block, all of them warnings: the block is optional, and
+ * Hark drops or shortens a bad field rather than rejecting the skill.
+ */
+export function harkMetadataWarnings(hark: unknown): string[] {
+  if (hark === undefined) return [];
+  if (!isRecord(hark)) return ["metadata.hark: not a mapping, so Hark ignores it"];
+  const warnings: string[] = [];
+  const { voice, summary, requires, phrases, routing } = hark;
+  if (voice !== undefined && voice !== true) warnings.push("metadata.hark.voice: should be true");
+  if (summary !== undefined) {
+    if (typeof summary !== "string" || summary.trim() === "") {
+      warnings.push("metadata.hark.summary: not a non-empty string, so Hark shows the description");
+    } else if (chars(summary) > MAX_SUMMARY) {
+      warnings.push(`metadata.hark.summary: ${chars(summary)} chars, Hark shortens it to ${MAX_SUMMARY}`);
+    }
   }
   if (requires !== undefined) {
-    if (!isRecord(requires)) {
-      errors.push("metadata.hark.requires: must be a mapping");
-    } else if (requires.command !== undefined) {
-      if (typeof requires.command !== "string" || !isToken(requires.command)) {
-        errors.push(`metadata.hark.requires.command: must match ${TOKEN.source}`);
-      }
+    const command = isRecord(requires) ? requires.command : requires;
+    if (command !== undefined && (typeof command !== "string" || !isToken(command))) {
+      warnings.push(`metadata.hark.requires.command: doesn't match ${TOKEN.source}, so Hark ignores it`);
     }
   }
   if (phrases !== undefined) {
-    if (!Array.isArray(phrases)) {
-      errors.push("metadata.hark.phrases: must be a list");
-    } else {
-      if (phrases.length > MAX_PHRASES) {
-        errors.push(`metadata.hark.phrases: ${phrases.length} items, at most ${MAX_PHRASES}`);
-      }
-      if (!phrases.every((p) => typeof p === "string" && p.trim() !== "")) {
-        errors.push("metadata.hark.phrases: every item must be a non-empty string");
-      }
+    if (!Array.isArray(phrases) || !phrases.every((p) => typeof p === "string" && p.trim() !== "")) {
+      warnings.push("metadata.hark.phrases: not a list of non-empty strings, so Hark ignores it");
+    } else if (phrases.length > MAX_PHRASES) {
+      warnings.push(`metadata.hark.phrases: ${phrases.length} items, Hark shows the first ${MAX_PHRASES}`);
     }
   }
   if (routing !== undefined) {
     if (typeof routing !== "string") {
-      errors.push("metadata.hark.routing: must be a string");
+      warnings.push("metadata.hark.routing: not a string, so Hark ignores it");
     } else if (chars(routing) > MAX_ROUTING) {
-      errors.push(`metadata.hark.routing: ${chars(routing)} chars, at most ${MAX_ROUTING}`);
+      warnings.push(`metadata.hark.routing: ${chars(routing)} chars, Hark cuts it to ${MAX_ROUTING}`);
     }
   }
-  return errors;
+  return warnings;
 }
 
-/** Errors in a catalog entry's SKILL.md: its name, description and metadata.hark. */
-export function skillErrors(entry: Pick<CatalogEntry, "name">, skillMd: string): string[] {
+export interface SkillCheck {
+  /** Problems that break listing or installing the skill. */
+  errors: string[];
+  /** Things Hark or Hermes works around. */
+  warnings: string[];
+}
+
+/** A catalog entry's SKILL.md: readable frontmatter whose name matches the entry, plus warnings. */
+export function checkSkill(entry: Pick<CatalogEntry, "name">, skillMd: string): SkillCheck {
   const yaml = frontmatter(skillMd);
-  if (yaml === null) return ["SKILL.md: no YAML frontmatter"];
+  if (yaml === null) return { errors: ["SKILL.md: no YAML frontmatter"], warnings: [] };
   let doc: unknown;
   try {
     doc = parseYaml(yaml);
   } catch (e) {
-    return [`SKILL.md: frontmatter is not valid YAML (${e instanceof Error ? e.message : String(e)})`];
+    const reason = e instanceof Error ? e.message : String(e);
+    return { errors: [`SKILL.md: frontmatter is not valid YAML (${reason})`], warnings: [] };
   }
-  if (!isRecord(doc)) return ["SKILL.md: frontmatter must be a mapping"];
+  if (!isRecord(doc)) return { errors: ["SKILL.md: frontmatter must be a mapping"], warnings: [] };
   const errors: string[] = [];
+  const warnings: string[] = [];
   if (doc.name !== entry.name) {
     errors.push(`name: SKILL.md says ${JSON.stringify(doc.name)}, catalog says "${entry.name}"`);
   }
   if (typeof doc.description !== "string" || doc.description.trim() === "") {
-    errors.push("description: must be a non-empty string");
+    warnings.push("description: missing, so Hermes uses the first line of the body");
   } else if (chars(doc.description) > MAX_DESCRIPTION) {
-    errors.push(`description: ${chars(doc.description)} chars, at most ${MAX_DESCRIPTION}`);
+    warnings.push(`description: ${chars(doc.description)} chars, Hermes shows the model the first ${MAX_DESCRIPTION}`);
   }
   const metadata = doc.metadata;
-  errors.push(...harkMetadataErrors(isRecord(metadata) ? metadata.hark : undefined));
-  return errors;
+  warnings.push(...harkMetadataWarnings(isRecord(metadata) ? metadata.hark : undefined));
+  return { errors, warnings };
 }
