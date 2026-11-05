@@ -6,6 +6,12 @@
       "install": "shanev/herdr-voice/skills/herdr-voice",
       "category": "autonomous-ai-agents",
       "reviewed": true
+    },
+    {
+      "name": "herdr-core-voice",
+      "install": "shanev/herdr-voice/skills/herdr-core-voice",
+      "category": "autonomous-ai-agents",
+      "reviewed": true
     }
   ]
 }
